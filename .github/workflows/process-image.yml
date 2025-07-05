@@ -1,0 +1,59 @@
+name: Process Water Quality Images
+
+on:
+  push:
+    paths:
+      - 'images/**'
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  process-image:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm install
+    
+    - name: Install system dependencies for Sharp
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvips-dev
+    
+    - name: Get changed files
+      id: changed-files
+      run: |
+        # Get the list of changed image files
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^images/' | grep -E '\.(jpg|jpeg|png)$' || echo "")
+        echo "Changed files: $CHANGED_FILES"
+        echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+    
+    - name: Process images
+      env:
+        FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
+      run: |
+        # Process each changed image file
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          if [ -f "$file" ]; then
+            echo "Processing $file"
+            node scripts/process-image.js "$file"
+          fi
+        done
+    
+    - name: Clean up processed images (optional)
+      run: |
+        # Remove processed images to keep repo clean
+        # Uncomment the next line if you want to auto-delete processed images
+        # git rm ${{ steps.changed-files.outputs.files }} && git commit -m "Remove processed images" && git push
