@@ -5,14 +5,26 @@
   "main": "scripts/process-image.js",
   "scripts": {
     "process": "node scripts/process-image.js",
-    "test": "echo \"No tests yet\""
+    "test": "echo \"No tests yet\"",
+    "start": "node scripts/process-image.js",
+    "dev": "node scripts/process-image.js"
   },
   "dependencies": {
-    "tesseract.js": "^5.0.4",
-    "sharp": "^0.33.2",
-    "firebase-admin": "^12.0.0"
+    "firebase-admin": "^13.4.0",
+    "sharp": "^0.34.2",
+    "tesseract.js": "^6.0.1"
   },
   "engines": {
-    "node": "18"
-  }
+    "node": ">=18",
+    "npm": ">=9"
+  },
+  "keywords": [
+    "water-quality",
+    "image-processing",
+    "ocr",
+    "firebase",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT"
 }

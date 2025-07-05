@@ -20,11 +20,11 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'  # Updated to latest LTS
         cache: 'npm'
     
     - name: Install dependencies
-      run: npm install
+      run: npm ci  # Faster and more reliable than npm install
     
     - name: Install system dependencies for Sharp
       run: |
@@ -34,8 +34,8 @@ jobs:
     - name: Get changed files
       id: changed-files
       run: |
-        # Get the list of changed image files
-        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^images/' | grep -E '\.(jpg|jpeg|png)$' || echo "")
+        # Get the list of changed image files (added more formats)
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^images/' | grep -E '\.(jpg|jpeg|png|webp|tiff|bmp)$' || echo "")
         echo "Changed files: $CHANGED_FILES"
         echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
     
@@ -43,17 +43,37 @@ jobs:
       env:
         FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
+        NODE_ENV: production
       run: |
+        # Check if there are any files to process
+        if [ -z "${{ steps.changed-files.outputs.files }}" ]; then
+          echo "No image files to process"
+          exit 0
+        fi
+        
         # Process each changed image file
         for file in ${{ steps.changed-files.outputs.files }}; do
           if [ -f "$file" ]; then
-            echo "Processing $file"
+            echo "🔄 Processing $file"
             node scripts/process-image.js "$file"
+            echo "✅ Completed processing $file"
+          else
+            echo "⚠️  File not found: $file"
           fi
         done
+        
+        echo "🎉 All images processed successfully!"
     
     - name: Clean up processed images (optional)
+      if: success()  # Only run if processing was successful
       run: |
         # Remove processed images to keep repo clean
-        # Uncomment the next line if you want to auto-delete processed images
-        # git rm ${{ steps.changed-files.outputs.files }} && git commit -m "Remove processed images" && git push
+        # Uncomment the next lines if you want to auto-delete processed images
+        # if [ -n "${{ steps.changed-files.outputs.files }}" ]; then
+        #   git config --local user.email "action@github.com"
+        #   git config --local user.name "GitHub Action"
+        #   git rm ${{ steps.changed-files.outputs.files }}
+        #   git commit -m "🧹 Remove processed images [skip ci]"
+        #   git push
+        # fi
+        echo "Cleanup step completed (currently disabled)"

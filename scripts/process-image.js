@@ -30,7 +30,7 @@ function extractUnitId(filename) {
   return match ? `unit_${match[1]}` : 'unit_1';
 }
 
-// Extract numeric value from OCR text
+// Extract numeric value from OCR text with improved accuracy
 function extractNumericValue(text, parameter) {
   console.log(`Raw OCR text for ${parameter}: "${text}"`);
   
@@ -47,7 +47,7 @@ function extractNumericValue(text, parameter) {
   
   console.log(`Found numbers for ${parameter}:`, numbers);
   
-  // Parameter-specific logic
+  // Parameter-specific logic with improved ranges
   switch (parameter) {
     case 'pH':
       // pH is typically 0-14, look for values in this range
@@ -58,26 +58,26 @@ function extractNumericValue(text, parameter) {
       return pHValues.length > 0 ? pHValues[0] : numbers[0];
       
     case 'temperature':
-      // Temperature likely 0-50°C for water systems
+      // Temperature likely -10 to 60°C for various water systems
       const tempValues = numbers.filter(n => {
         const val = parseFloat(n);
-        return val >= 0 && val <= 50;
+        return val >= -10 && val <= 60;
       });
       return tempValues.length > 0 ? tempValues[0] : numbers[0];
       
     case 'dissolvedOxygen':
-      // Dissolved oxygen typically 0-20 mg/L
+      // Dissolved oxygen typically 0-25 mg/L
       const doValues = numbers.filter(n => {
         const val = parseFloat(n);
-        return val >= 0 && val <= 20;
+        return val >= 0 && val <= 25;
       });
       return doValues.length > 0 ? doValues[0] : numbers[0];
       
     case 'salinity':
-      // Salinity can vary widely, prefer decimal values
+      // Salinity can vary widely, 0-50 ppt for most applications
       const salinityValues = numbers.filter(n => {
         const val = parseFloat(n);
-        return val >= 0 && val <= 100; // Reasonable range for most applications
+        return val >= 0 && val <= 50;
       });
       return salinityValues.length > 0 ? salinityValues[0] : numbers[0];
       
@@ -86,17 +86,17 @@ function extractNumericValue(text, parameter) {
   }
 }
 
-// Process image quadrants
+// Process image quadrants with enhanced preprocessing
 async function processImage(imagePath) {
   console.log(`Processing image: ${imagePath}`);
   
   try {
-    // Read image
+    // Read image with enhanced metadata
     const imageBuffer = fs.readFileSync(imagePath);
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width, height, format, density } = metadata;
     
-    // Get image dimensions
-    const { width, height } = await sharp(imageBuffer).metadata();
-    console.log(`Image dimensions: ${width}x${height}`);
+    console.log(`Image: ${width}x${height}, Format: ${format}, Density: ${density || 'unknown'}`);
     
     const halfWidth = Math.floor(width / 2);
     const halfHeight = Math.floor(height / 2);
@@ -133,42 +133,55 @@ async function processImage(imagePath) {
       }
     };
     
-    // Process each quadrant
+    // Process each quadrant with enhanced preprocessing
     const results = {};
+    const processingPromises = [];
     
     for (const [parameter, coordinates] of Object.entries(quadrants)) {
-      console.log(`Processing ${parameter} quadrant...`);
+      const promise = (async () => {
+        console.log(`Processing ${parameter} quadrant...`);
+        
+        try {
+          // Enhanced preprocessing pipeline
+          const quadrantBuffer = await sharp(imageBuffer)
+            .extract(coordinates)
+            .greyscale()
+            .normalize()
+            .sharpen({ sigma: 1.0 })
+            .contrast(1.2)
+            .resize(coordinates.width * 3, coordinates.height * 3, {
+              kernel: sharp.kernel.lanczos3
+            })
+            .toBuffer();
+          
+          // Enhanced OCR configuration for Tesseract.js 6.0+
+          const { data: { text } } = await Tesseract.recognize(quadrantBuffer, 'eng', {
+            logger: info => {
+              if (info.status === 'recognizing text') {
+                console.log(`OCR ${parameter}: ${Math.round(info.progress * 100)}%`);
+              }
+            },
+            tessedit_char_whitelist: '0123456789.',
+            tessedit_pageseg_mode: '6' // SINGLE_UNIFORM_BLOCK
+          });
+          
+          // Extract numeric value
+          const numericValue = extractNumericValue(text, parameter);
+          results[parameter] = numericValue;
+          
+          console.log(`${parameter}: "${numericValue}"`);
+          
+        } catch (error) {
+          console.error(`Error processing ${parameter}:`, error.message);
+          results[parameter] = "";
+        }
+      })();
       
-      try {
-        // Extract and preprocess quadrant
-        const quadrantBuffer = await sharp(imageBuffer)
-          .extract(coordinates)
-          .greyscale()
-          .normalize()
-          .sharpen()
-          .resize(coordinates.width * 2, coordinates.height * 2) // Upscale for better OCR
-          .toBuffer();
-        
-        // Perform OCR
-        const { data: { text } } = await Tesseract.recognize(quadrantBuffer, 'eng', {
-          logger: info => {
-            if (info.status === 'recognizing text') {
-              console.log(`OCR ${parameter}: ${Math.round(info.progress * 100)}%`);
-            }
-          }
-        });
-        
-        // Extract numeric value
-        const numericValue = extractNumericValue(text, parameter);
-        results[parameter] = numericValue;
-        
-        console.log(`${parameter}: "${numericValue}"`);
-        
-      } catch (error) {
-        console.error(`Error processing ${parameter}:`, error.message);
-        results[parameter] = "";
-      }
+      processingPromises.push(promise);
     }
+    
+    // Wait for all quadrants to be processed
+    await Promise.all(processingPromises);
     
     return results;
     
@@ -178,12 +191,19 @@ async function processImage(imagePath) {
   }
 }
 
-// Update Firebase Database
+// Update Firebase Database with timestamp
 async function updateFirebase(unitId, data) {
-  console.log(`Updating Firebase for ${unitId}:`, data);
+  const timestamp = new Date().toISOString();
+  const dataWithTimestamp = {
+    ...data,
+    lastUpdated: timestamp,
+    processedAt: admin.database.ServerValue.TIMESTAMP
+  };
+  
+  console.log(`Updating Firebase for ${unitId}:`, dataWithTimestamp);
   
   try {
-    await admin.database().ref(`${unitId}`).update(data);
+    await admin.database().ref(`${unitId}`).update(dataWithTimestamp);
     console.log('Firebase updated successfully');
   } catch (error) {
     console.error('Error updating Firebase:', error.message);
@@ -191,7 +211,7 @@ async function updateFirebase(unitId, data) {
   }
 }
 
-// Main function
+// Main function with error handling
 async function main() {
   const imagePath = process.argv[2];
   
@@ -205,13 +225,17 @@ async function main() {
     process.exit(1);
   }
   
+  const startTime = Date.now();
+  
   try {
+    console.log('🚀 Starting water quality image processing...');
+    
     // Initialize Firebase
     initFirebase();
     
     // Extract unit ID from filename
     const unitId = extractUnitId(imagePath);
-    console.log(`Unit ID: ${unitId}`);
+    console.log(`📊 Unit ID: ${unitId}`);
     
     // Process image
     const results = await processImage(imagePath);
@@ -219,10 +243,11 @@ async function main() {
     // Update Firebase
     await updateFirebase(unitId, results);
     
-    console.log('Processing completed successfully!');
+    const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✅ Processing completed successfully in ${processingTime}s!`);
     
   } catch (error) {
-    console.error('Processing failed:', error.message);
+    console.error('❌ Processing failed:', error.message);
     process.exit(1);
   }
 }
