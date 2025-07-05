@@ -117,7 +117,7 @@ jobs:
               if timeout 300 node scripts/process-image.js "$file"; then
                 echo "✅ Successfully processed: $file"
                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-                PROCESSED_FILES="$PROCESSED_FILES $file"
+                PROCESSED_FILES="$PROCESSED_FILES$file "
               else
                 echo "❌ Failed to process: $file"
                 FAILED_COUNT=$((FAILED_COUNT + 1))
@@ -134,23 +134,25 @@ jobs:
         echo "Successfully processed: $SUCCESS_COUNT"
         echo "Failed: $FAILED_COUNT"
         
-        # Save processed files for cleanup
+        # Save processed files for cleanup (even if some failed)
         echo "$PROCESSED_FILES" > /tmp/successfully_processed.txt
         
         # Set outputs
         echo "success_count=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
         echo "failed_count=$FAILED_COUNT" >> $GITHUB_OUTPUT
+        echo "processing_completed=true" >> $GITHUB_OUTPUT
         
-        # Exit with error if any processing failed
-        if [ $FAILED_COUNT -gt 0 ]; then
-          echo "❌ Some files failed to process"
-          exit 1
+        # Don't exit with error - let cleanup happen even if some processing failed
+        if [ $SUCCESS_COUNT -gt 0 ]; then
+          echo "🎉 $SUCCESS_COUNT images processed successfully!"
         fi
         
-        echo "🎉 All images processed successfully!"
+        if [ $FAILED_COUNT -gt 0 ]; then
+          echo "⚠️  $FAILED_COUNT files failed to process but continuing with cleanup"
+        fi
     
     - name: Clean up processed images
-      if: steps.changed-files.outputs.has_files_to_process == 'true' && success()
+      if: steps.changed-files.outputs.has_files_to_process == 'true' && steps.process-images.outputs.processing_completed == 'true' && steps.process-images.outputs.success_count > 0
       run: |
         echo "🧹 Starting cleanup of successfully processed images..."
         
@@ -164,13 +166,14 @@ jobs:
         # Read successfully processed files
         if [ -f "/tmp/successfully_processed.txt" ]; then
           PROCESSED_FILES=$(cat /tmp/successfully_processed.txt)
+          echo "Files to potentially clean up: $PROCESSED_FILES"
           
           for file in $PROCESSED_FILES; do
             if [ -n "$file" ] && [ -f "$file" ]; then
               echo "🗑️  Removing: $file"
               git rm "$file"
               DELETED_COUNT=$((DELETED_COUNT + 1))
-              DELETED_FILES="$DELETED_FILES $file"
+              DELETED_FILES="$DELETED_FILES$file "
             fi
           done
         fi
@@ -181,6 +184,9 @@ jobs:
           
           Processed and removed:
           $DELETED_FILES
+          
+          Success: ${{ steps.process-images.outputs.success_count }}
+          Failed: ${{ steps.process-images.outputs.failed_count }}
           
           Workflow: ${{ github.workflow }}
           Run ID: ${{ github.run_id }}
@@ -244,10 +250,10 @@ jobs:
         fi
     
     - name: Notify completion
-      if: success() && steps.changed-files.outputs.has_files_to_process == 'true'
+      if: steps.changed-files.outputs.has_files_to_process == 'true' && steps.process-images.outputs.success_count > 0
       run: |
         echo "🔔 Processing Notification:"
-        echo "Successfully processed and cleaned up ${{ steps.changed-files.outputs.process_count }} water quality images"
+        echo "Successfully processed and cleaned up ${{ steps.process-images.outputs.success_count }} water quality images"
         echo "Repository: ${{ github.repository }}"
         echo "Branch: ${{ github.ref_name }}"
         echo "Commit: ${{ github.sha }}"
