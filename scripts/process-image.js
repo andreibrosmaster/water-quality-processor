@@ -34,56 +34,60 @@ function extractUnitId(filename) {
 function extractNumericValue(text, parameter) {
   console.log(`Raw OCR text for ${parameter}: "${text}"`);
   
-  // Clean the text - remove everything except digits, dots, and spaces
+  // Clean the text - remove everything except digits, dots, spaces, and minus signs
   let cleanText = text.replace(/[^\d.\s-]/g, ' ').trim();
   
-  // Find all potential numeric values
-  const numbers = cleanText.match(/\d+\.?\d*/g);
+  // Find all potential numeric values including decimals and negative numbers
+  const numbers = cleanText.match(/-?\d+\.?\d*/g);
   
   if (!numbers || numbers.length === 0) {
     console.log(`No numbers found in OCR text for ${parameter}`);
-    return "";
+    return "0.00";
   }
   
   console.log(`Found numbers for ${parameter}:`, numbers);
   
+  // Convert to floats and filter based on parameter ranges
+  const validNumbers = numbers.map(n => parseFloat(n)).filter(n => !isNaN(n));
+  
+  if (validNumbers.length === 0) {
+    console.log(`No valid numbers found for ${parameter}`);
+    return "0.00";
+  }
+  
   // Parameter-specific logic with improved ranges
+  let selectedValue;
   switch (parameter) {
     case 'pH':
       // pH is typically 0-14, look for values in this range
-      const pHValues = numbers.filter(n => {
-        const val = parseFloat(n);
-        return val >= 0 && val <= 14;
-      });
-      return pHValues.length > 0 ? pHValues[0] : numbers[0];
+      const pHValues = validNumbers.filter(n => n >= 0 && n <= 14);
+      selectedValue = pHValues.length > 0 ? pHValues[0] : validNumbers[0];
+      break;
       
     case 'temperature':
       // Temperature likely -10 to 60°C for various water systems
-      const tempValues = numbers.filter(n => {
-        const val = parseFloat(n);
-        return val >= -10 && val <= 60;
-      });
-      return tempValues.length > 0 ? tempValues[0] : numbers[0];
+      const tempValues = validNumbers.filter(n => n >= -10 && n <= 60);
+      selectedValue = tempValues.length > 0 ? tempValues[0] : validNumbers[0];
+      break;
       
     case 'dissolvedOxygen':
       // Dissolved oxygen typically 0-25 mg/L
-      const doValues = numbers.filter(n => {
-        const val = parseFloat(n);
-        return val >= 0 && val <= 25;
-      });
-      return doValues.length > 0 ? doValues[0] : numbers[0];
+      const doValues = validNumbers.filter(n => n >= 0 && n <= 25);
+      selectedValue = doValues.length > 0 ? doValues[0] : validNumbers[0];
+      break;
       
     case 'salinity':
       // Salinity can vary widely, 0-50 ppt for most applications
-      const salinityValues = numbers.filter(n => {
-        const val = parseFloat(n);
-        return val >= 0 && val <= 50;
-      });
-      return salinityValues.length > 0 ? salinityValues[0] : numbers[0];
+      const salinityValues = validNumbers.filter(n => n >= 0 && n <= 50);
+      selectedValue = salinityValues.length > 0 ? salinityValues[0] : validNumbers[0];
+      break;
       
     default:
-      return numbers[0];
+      selectedValue = validNumbers[0];
   }
+  
+  // Format to 2 decimal places
+  return selectedValue.toFixed(2);
 }
 
 // Process image quadrants with enhanced preprocessing
@@ -133,7 +137,7 @@ async function processImage(imagePath) {
       }
     };
     
-    // Process each quadrant with enhanced preprocessing
+    // Process each quadrant with multiple preprocessing strategies
     const results = {};
     const processingPromises = [];
     
@@ -142,38 +146,104 @@ async function processImage(imagePath) {
         console.log(`Processing ${parameter} quadrant...`);
         
         try {
-          // Enhanced preprocessing pipeline
-          const quadrantBuffer = await sharp(imageBuffer)
+          // Strategy 1: Basic preprocessing
+          const basicBuffer = await sharp(imageBuffer)
             .extract(coordinates)
             .greyscale()
             .normalize()
-            .sharpen({ sigma: 1.0 })
-            .linear(1.2, 0) // Adjust contrast by scaling pixel values
-            .resize(coordinates.width * 3, coordinates.height * 3, {
+            .resize(coordinates.width * 2, coordinates.height * 2, {
               kernel: sharp.kernel.lanczos3
             })
             .toBuffer();
           
-          // Enhanced OCR configuration for Tesseract.js 6.0+
-          const { data: { text } } = await Tesseract.recognize(quadrantBuffer, 'eng', {
-            logger: info => {
-              if (info.status === 'recognizing text') {
-                console.log(`OCR ${parameter}: ${Math.round(info.progress * 100)}%`);
-              }
-            },
-            tessedit_char_whitelist: '0123456789.',
-            tessedit_pageseg_mode: '6' // SINGLE_UNIFORM_BLOCK
-          });
+          // Strategy 2: High contrast preprocessing
+          const contrastBuffer = await sharp(imageBuffer)
+            .extract(coordinates)
+            .greyscale()
+            .normalize()
+            .linear(2.0, -50) // High contrast
+            .sharpen({ sigma: 2.0 })
+            .resize(coordinates.width * 2, coordinates.height * 2, {
+              kernel: sharp.kernel.lanczos3
+            })
+            .toBuffer();
           
-          // Extract numeric value
-          const numericValue = extractNumericValue(text, parameter);
-          results[parameter] = numericValue;
+          // Strategy 3: Threshold preprocessing for clear digits
+          const thresholdBuffer = await sharp(imageBuffer)
+            .extract(coordinates)
+            .greyscale()
+            .normalize()
+            .threshold(128) // Binary threshold
+            .resize(coordinates.width * 2, coordinates.height * 2, {
+              kernel: sharp.kernel.lanczos3
+            })
+            .toBuffer();
           
-          console.log(`${parameter}: "${numericValue}"`);
+          // Try OCR with different preprocessing strategies
+          const ocrPromises = [
+            Tesseract.recognize(basicBuffer, 'eng', {
+              logger: info => {
+                if (info.status === 'recognizing text') {
+                  console.log(`OCR ${parameter} (basic): ${Math.round(info.progress * 100)}%`);
+                }
+              },
+              tessedit_char_whitelist: '0123456789.-',
+              tessedit_pageseg_mode: '8' // SINGLE_WORD
+            }),
+            Tesseract.recognize(contrastBuffer, 'eng', {
+              logger: info => {
+                if (info.status === 'recognizing text') {
+                  console.log(`OCR ${parameter} (contrast): ${Math.round(info.progress * 100)}%`);
+                }
+              },
+              tessedit_char_whitelist: '0123456789.-',
+              tessedit_pageseg_mode: '8' // SINGLE_WORD
+            }),
+            Tesseract.recognize(thresholdBuffer, 'eng', {
+              logger: info => {
+                if (info.status === 'recognizing text') {
+                  console.log(`OCR ${parameter} (threshold): ${Math.round(info.progress * 100)}%`);
+                }
+              },
+              tessedit_char_whitelist: '0123456789.-',
+              tessedit_pageseg_mode: '8' // SINGLE_WORD
+            })
+          ];
+          
+          // Wait for all OCR attempts
+          const ocrResults = await Promise.all(ocrPromises);
+          
+          // Combine all OCR results and find the best one
+          const allTexts = ocrResults.map(result => result.data.text);
+          let bestValue = "0.00";
+          let bestConfidence = 0;
+          
+          for (let i = 0; i < allTexts.length; i++) {
+            const text = allTexts[i];
+            const confidence = ocrResults[i].data.confidence;
+            
+            console.log(`OCR ${parameter} strategy ${i+1}: "${text}" (confidence: ${confidence})`);
+            
+            // Try to extract numeric value
+            const numericValue = extractNumericValue(text, parameter);
+            
+            // If we got a valid number (not 0.00) and confidence is decent, use it
+            if (numericValue !== "0.00" && confidence > bestConfidence) {
+              bestValue = numericValue;
+              bestConfidence = confidence;
+            } else if (bestValue === "0.00" && numericValue !== "0.00") {
+              // If we haven't found anything yet, take any valid number
+              bestValue = numericValue;
+              bestConfidence = confidence;
+            }
+          }
+          
+          results[parameter] = bestValue;
+          console.log(`${parameter}: "${bestValue}" (best confidence: ${bestConfidence})`);
           
         } catch (error) {
           console.error(`Error processing ${parameter}:`, error.message);
-          results[parameter] = "";
+          results[parameter] = "0.00";
         }
       })();
       
