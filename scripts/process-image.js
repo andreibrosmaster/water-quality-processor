@@ -148,7 +148,7 @@ async function processImage(imagePath) {
             .greyscale()
             .normalize()
             .sharpen({ sigma: 1.0 })
-            .contrast(1.2)
+            .linear(1.2, 0) // Adjust contrast by scaling pixel values
             .resize(coordinates.width * 3, coordinates.height * 3, {
               kernel: sharp.kernel.lanczos3
             })
