@@ -82,9 +82,18 @@ jobs:
         echo "ℹ️  Only deleted files detected. Skipping image processing."
         echo "Deleted files:"
         echo "${{ steps.changed-files.outputs.deleted_files }}"
+        echo "✅ Workflow completed - no processing needed for deletions"
+        exit 0
+    
+    - name: Skip processing if no files to process
+      if: steps.changed-files.outputs.has_files_to_process == 'false' && steps.changed-files.outputs.has_deleted_files == 'false'
+      run: |
+        echo "ℹ️  No image files to process (no additions, modifications, or deletions detected)"
+        echo "✅ Workflow completed - no action needed"
         exit 0
     
     - name: Process new/modified images
+      id: process-images
       if: steps.changed-files.outputs.has_files_to_process == 'true'
       env:
         FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -216,8 +225,8 @@ jobs:
         # Show file statistics
         if [ "${{ steps.changed-files.outputs.has_files_to_process }}" = "true" ]; then
           echo "Files processed: ${{ steps.changed-files.outputs.process_count }}"
-          echo "Successfully processed: ${{ steps.process-images.outputs.success_count || 0 }}"
-          echo "Failed: ${{ steps.process-images.outputs.failed_count || 0 }}"
+          echo "Successfully processed: ${{ steps.process-images.outputs.success_count || '0' }}"
+          echo "Failed: ${{ steps.process-images.outputs.failed_count || '0' }}"
         fi
         
         if [ "${{ steps.changed-files.outputs.has_deleted_files }}" = "true" ]; then
