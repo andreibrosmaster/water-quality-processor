@@ -1,5 +1,4 @@
 name: Process Water Quality Images
-
 on:
   push:
     paths:
@@ -16,15 +15,16 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 2
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22'  # Updated to latest LTS
+        node-version: '22'
         cache: 'npm'
     
     - name: Install dependencies
-      run: npm ci  # Faster and more reliable than npm install
+      run: npm ci
     
     - name: Install system dependencies for Sharp
       run: |
@@ -34,29 +34,40 @@ jobs:
     - name: Get changed files
       id: changed-files
       run: |
-        # Get the list of changed image files (added more formats)
+        # Get the list of changed image files
         CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^images/' | grep -E '\.(jpg|jpeg|png|webp|tiff|bmp)$' || echo "")
         echo "Changed files: $CHANGED_FILES"
         echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+        
+        # Convert to array for easier processing
+        if [ -n "$CHANGED_FILES" ]; then
+          echo "has_files=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_files=false" >> $GITHUB_OUTPUT
+        fi
     
     - name: Process images
+      if: steps.changed-files.outputs.has_files == 'true'
       env:
         FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
         NODE_ENV: production
       run: |
-        # Check if there are any files to process
-        if [ -z "${{ steps.changed-files.outputs.files }}" ]; then
-          echo "No image files to process"
-          exit 0
-        fi
+        echo "🚀 Starting image processing workflow..."
         
         # Process each changed image file
         for file in ${{ steps.changed-files.outputs.files }}; do
           if [ -f "$file" ]; then
             echo "🔄 Processing $file"
             node scripts/process-image.js "$file"
-            echo "✅ Completed processing $file"
+            
+            # Check if processing was successful
+            if [ $? -eq 0 ]; then
+              echo "✅ Successfully processed $file"
+            else
+              echo "❌ Failed to process $file"
+              exit 1
+            fi
           else
             echo "⚠️  File not found: $file"
           fi
@@ -64,16 +75,55 @@ jobs:
         
         echo "🎉 All images processed successfully!"
     
-    - name: Clean up processed images (optional)
-      if: success()  # Only run if processing was successful
+    - name: Clean up processed images
+      if: steps.changed-files.outputs.has_files == 'true'
       run: |
-        # Remove processed images to keep repo clean
-        # Uncomment the next lines if you want to auto-delete processed images
-        # if [ -n "${{ steps.changed-files.outputs.files }}" ]; then
-        #   git config --local user.email "action@github.com"
-        #   git config --local user.name "GitHub Action"
-        #   git rm ${{ steps.changed-files.outputs.files }}
-        #   git commit -m "🧹 Remove processed images [skip ci]"
-        #   git push
-        # fi
-        echo "Cleanup step completed (currently disabled)"
+        echo "🧹 Starting cleanup of processed images..."
+        
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Remove processed images
+        DELETED_FILES=""
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          if [ -f "$file" ]; then
+            echo "🗑️  Deleting $file"
+            git rm "$file"
+            DELETED_FILES="$DELETED_FILES $file"
+          fi
+        done
+        
+        # Commit and push changes if files were deleted
+        if [ -n "$DELETED_FILES" ]; then
+          git commit -m "🧹 Remove processed images: $DELETED_FILES [skip ci]"
+          git push
+          echo "✅ Cleanup completed - deleted files: $DELETED_FILES"
+        else
+          echo "ℹ️  No files to clean up"
+        fi
+    
+    - name: Post-processing summary
+      if: always()
+      run: |
+        echo "📊 Post-processing summary:"
+        echo "Files processed: ${{ steps.changed-files.outputs.files }}"
+        echo "Cleanup completed: ${{ steps.changed-files.outputs.has_files }}"
+        echo "Workflow status: ${{ job.status }}"
+        
+        # Log final status
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "🎉 Water quality image processing workflow completed successfully!"
+        else
+          echo "❌ Workflow completed with issues"
+        fi
+    
+    - name: Notify completion
+      if: success()
+      run: |
+        echo "🔔 Processing notification:"
+        echo "- Repository: ${{ github.repository }}"
+        echo "- Branch: ${{ github.ref_name }}"
+        echo "- Commit: ${{ github.sha }}"
+        echo "- Processed files: ${{ steps.changed-files.outputs.files }}"
+        echo "- Timestamp: $(date -u)"
