@@ -1,0 +1,18 @@
+{
+  "name": "water-quality-processor",
+  "version": "1.0.0",
+  "description": "Process water quality images and update Firebase",
+  "main": "scripts/process-image.js",
+  "scripts": {
+    "process": "node scripts/process-image.js",
+    "test": "echo \"No tests yet\""
+  },
+  "dependencies": {
+    "tesseract.js": "^5.0.4",
+    "sharp": "^0.33.2",
+    "firebase-admin": "^12.0.0"
+  },
+  "engines": {
+    "node": "18"
+  }
+}
